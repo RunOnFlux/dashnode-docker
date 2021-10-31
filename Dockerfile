@@ -10,8 +10,9 @@ RUN tar xzvf /tmp/dashcore-0.17.0.3-x86_64-linux-gnu.tar.gz -C /tmp \
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY node_initialize.sh /node_initialize.sh
 COPY check-health.sh /check-health.sh
+COPY sentinel.sh /sentinel.sh
 VOLUME /root/.dashcore
-RUN chmod 755 node_initialize.sh check-health.sh
+RUN chmod 755 node_initialize.sh check-health.sh sentinel.sh
 EXPOSE 19999
 HEALTHCHECK --start-period=5m --interval=2m --retries=5 --timeout=15s CMD ./check-health.sh
 ENTRYPOINT ["/usr/bin/supervisord"]

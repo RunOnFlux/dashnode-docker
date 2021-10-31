@@ -13,6 +13,6 @@ COPY check-health.sh /check-health.sh
 COPY sentinel.sh /sentinel.sh
 VOLUME /root/.dashcore
 RUN chmod 755 node_initialize.sh check-health.sh sentinel.sh
-EXPOSE 9998
+EXPOSE 9999
 HEALTHCHECK --start-period=5m --interval=2m --retries=5 --timeout=15s CMD ./check-health.sh
 ENTRYPOINT ["/usr/bin/supervisord"]

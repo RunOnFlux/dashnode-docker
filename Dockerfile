@@ -11,7 +11,7 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY node_initialize.sh /node_initialize.sh
 COPY check-health.sh /check-health.sh
 VOLUME /root/.dashcore
-RUN chmod 755 node_initialize.sh check-health.sh cronjob.sh
+RUN chmod 755 node_initialize.sh check-health.sh
 EXPOSE 19999
 HEALTHCHECK --start-period=5m --interval=2m --retries=5 --timeout=15s CMD ./check-health.sh
 ENTRYPOINT ["/usr/bin/supervisord"]

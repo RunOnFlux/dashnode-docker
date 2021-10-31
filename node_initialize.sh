@@ -35,4 +35,7 @@ masternodeblsprivkey=$KEY
 maxconnections=256
 EOF
 
+while true; do
 dashd -daemon
+sleep 60
+done

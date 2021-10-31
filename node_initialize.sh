@@ -36,6 +36,6 @@ maxconnections=256
 EOF
 
 while true; do
-dashd
+dashd -daemon
 sleep 60
 done

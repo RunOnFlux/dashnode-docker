@@ -17,7 +17,7 @@ function max(){
 NETWORK_BLOCK_HEIGHT1=$(curl -SsL https://chainz.cryptoid.info/dash/api.dws?q=getblockcount)
 NETWORK_BLOCK_HEIGHT2=$(curl -SsL https://explorer.dash.org/insight-api//status?q=getInfo | jq .info.blocks)
 
-CURRENT_NODE_HEIGHT=$(dash-cli getinfo | jq '.blocks')
+CURRENT_NODE_HEIGHT=$(dash-cli -getinfo | jq '.blocks')
 if ! egrep -o "^[0-9]+$" <<< "$CURRENT_NODE_HEIGHT" &>/dev/null; then
   echo "Daemon not working correct..."
   exit 1

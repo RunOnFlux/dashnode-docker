@@ -1,5 +1,6 @@
 ARG UBUNTUVER=20.04
 FROM ubuntu:${UBUNTUVER}
+LABEL com.centurylinklabs.watchtower.enable="true"
 
 RUN mkdir -p /root/.dashcore
 RUN mkdir -p /var/log/supervisor

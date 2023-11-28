@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 
 function get_ip() {
-
     WANIP=$(curl --silent -m 15 https://api4.my-ip.io/ip | tr -dc '[:alnum:].')
-
-    if [[ "$WANIP" == "" ]]; then
-      WANIP=$(curl --silent -m 15 https://checkip.amazonaws.com | tr -dc '[:alnum:].')
-    fi
-
-    if [[ "$WANIP" == "" ]]; then
-      WANIP=$(curl --silent -m 15 https://api.ipify.org | tr -dc '[:alnum:].')
+    if [[ "$WANIP" == "" || "$WANIP" = *htmlhead* ]]; then
+        WANIP=$(curl --silent -m 15 https://checkip.amazonaws.com | tr -dc '[:alnum:].')    
+    fi  
+    if [[ "$WANIP" == "" || "$WANIP" = *htmlhead* ]]; then
+        WANIP=$(curl --silent -m 15 https://api.ipify.org | tr -dc '[:alnum:].')
     fi
 }
-
 
 get_ip
 RPCUSER=$(pwgen -1 8 -n)
@@ -36,6 +32,9 @@ maxconnections=256
 EOF
 
 while true; do
-dashd -daemon
-sleep 60
+ if [[ $(pgrep dashd) == "" ]]; then 
+   echo -e "Starting daemon..."
+   dashd -daemon
+ fi
+ sleep 120
 done

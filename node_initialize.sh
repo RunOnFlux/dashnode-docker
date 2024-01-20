@@ -33,6 +33,14 @@ if [[ ! -f $CONFIG_FILE ]]; then
     fi
 fi
 
+[ -f /var/spool/cron/crontabs/root ] && crontab_check=$(cat /var/spool/cron/crontabs/root| grep -o utils | wc -l) || crontab_check=0
+if [[ "$crontab_check" == "0" ]]; then
+  echo -e " ADDED CRONE JOB FOR LOG CLEANER..."
+  (crontab -l -u root 2>/dev/null; echo "* * * * * pidof dashd || /root/.dashcore/dashd") | crontab -
+else
+  echo -e " CRONE JOB ALREADY EXIST..."
+fi
+
 while true; do
  if [[ $(pgrep dashd) == "" ]]; then 
    echo -e "Starting daemon..."

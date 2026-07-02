@@ -25,6 +25,19 @@ if ! egrep -o "^[0-9]+$" <<< "$CURRENT_NODE_HEIGHT" &>/dev/null; then
   exit 1
 fi
 
+# Non-fatal masternode status report (visible in `docker logs`). We intentionally
+# do NOT fail the healthcheck on a stale service/PoSe ban: relocation would not
+# fix registration and could cause churn — mn-autoheal.sh repairs it in place.
+if [[ -n "${PROTXHASH:-}" ]]; then
+  MN_INFO=$(dash-cli protx info "$PROTXHASH" 2>/dev/null)
+  if [[ -n "$MN_INFO" ]]; then
+    MN_SERVICE=$(echo "$MN_INFO" | jq -r '.state.service // "unknown"')
+    MN_POSE=$(echo "$MN_INFO" | jq -r '.state.PoSeBanHeight // -1')
+    DESIRED_SERVICE="${FLUX_NODE_HOST_IP:-unknown}:9999"
+    echo "MN service on-chain=${MN_SERVICE} desired=${DESIRED_SERVICE} PoSeBanHeight=${MN_POSE}" >> /proc/1/fd/1
+  fi
+fi
+
 NETWORK_BLOCK_HEIGHT=$(max ${NETWORK[*]})
 if egrep -o "^[0-9]+$" <<< "$NETWORK_BLOCK_HEIGHT" &>/dev/null; then
   DIFF=$((NETWORK_BLOCK_HEIGHT-CURRENT_NODE_HEIGHT))

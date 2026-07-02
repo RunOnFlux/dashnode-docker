@@ -1,0 +1,45 @@
+{
+  "description": "Host your Dash Masternode on the Flux Network (HA: 2 redundant nodes with automatic failover)",
+  "priceUSD": 7,
+  "category": "Masternode",
+  "version": 8,
+  "name": "DashMN",
+  "instances": 2,
+  "staticip": true,
+  "compose": [
+    {
+      "name": "node",
+      "description": "The Dash Masternode container",
+      "repotag": "runonflux/dashnode:latest",
+      "containerPorts": [
+        9999
+      ],
+      "domains": [
+        ""
+      ],
+      "environmentParameters": [],
+      "commands": [],
+      "containerData": "/root/.dashcore",
+      "cpu": 2,
+      "ram": 4000,
+      "hdd": 70,
+      "ports": [
+        9999
+      ],
+      "userEnvironmentParameters": [
+        {
+          "name": "KEY",
+          "description": "Masternode operator BLS private key",
+          "placeholder": "Enter your operator BLS private key"
+        },
+        {
+          "name": "PROTXHASH",
+          "description": "Your masternode registration hash (proTxHash). Enables automatic on-chain IP updates so the node is never PoSe-banned after a relocation.",
+          "placeholder": "Enter your proTxHash"
+        }
+      ]
+    }
+  ],
+  "visible": true,
+  "enabled": true
+}

@@ -1,46 +1,38 @@
 #!/usr/bin/env bash
-# HA self-healing controller for a Dash masternode on Flux (Tier 2).
+# HA self-healing controller for a Flux masternode (Tier 2).
+# protx info / update_service are Dash-derived RPCs shared across every supported
+# coin; coin-specific values come from coin.env.
 #
-# Model: N instances (default 2), each a full dashd on its OWN independent chain.
-# A masternode is a single on-chain identity, so only the LEADER (lowest-IP alive
-# instance) holds the registration; the others are warm standbys. On leader death
-# the elected survivor points the registration at itself via ProUpServTx. Failback
-# is not forced (avoids churn). Standbys are not the registered service, so they do
-# not participate in quorums — no double-signing risk.
+# Model: N instances (default 2), each a full node daemon on its OWN chain. Only the
+# LEADER (lowest-IP alive instance) holds the on-chain registration; the others are
+# warm standbys. On leader death the elected survivor points the registration at
+# itself via ProUpServTx. No forced failback. Standbys are not the registered
+# service, so they do not participate in quorums — no double-signing risk.
 #
-# REQUIRES:
-#   PROTXHASH  - masternode registration hash (proTxHash).  user-provided
-#   KEY        - operator BLS private key.                  user-provided
-#   A small DASH fee balance in the wallet (fund the printed address once).
-# Injected by Flux: FLUX_NODE_HOST_IP (this node's public IP), FLUX_APP_NAME.
+# REQUIRES: PROTXHASH, KEY (operator BLS priv), and a small coin fee balance.
+# Injected by Flux: FLUX_NODE_HOST_IP, FLUX_APP_NAME.
 set -uo pipefail
+# shellcheck disable=SC1091
+source /usr/local/bin/coin.env
 
-MN_PORT=9999
-CLI="${CLI:-dash-cli}"
-CHECK_INTERVAL="${AUTOHEAL_INTERVAL:-120}"      # seconds between cycles (fast failover)
-SETTLE="${AUTOHEAL_SETTLE:-5}"                  # settle window before promotion
+CHECK_INTERVAL="${AUTOHEAL_INTERVAL:-120}"
+SETTLE="${AUTOHEAL_SETTLE:-5}"
 FLUX_API="${FLUX_API:-https://api.runonflux.io}"
-FEE_ADDR_FILE="/root/.dashcore/.mn_fee_address"
+FEE_ADDR_FILE="${DATADIR}/.mn_fee_address"
 
 MYIP="${FLUX_NODE_HOST_IP:-}"
 DESIRED="${MYIP}:${MN_PORT}"
 
 log() { echo " [mn-autoheal] $*"; }
 
-# ---- helpers (overridable in tests) ----------------------------------------
-
-# TCP reachability probe (bash builtin, no extra deps).
 probe() { timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1; }
 
-# Fully synced (not in initial block download)?
 is_synced() {
     local ibd
     ibd=$($CLI getblockchaininfo 2>/dev/null | jq -r '.initialblockdownload // "true"')
     [[ "$ibd" == "false" ]]
 }
 
-# Discover sibling instance IPs for this app via the Flux location API.
-# Falls back to stripping a compose component prefix if the first lookup is empty.
 get_siblings() {
     local name="$1" ips
     ips=$(curl -s -m 15 "${FLUX_API}/apps/location/${name}" 2>/dev/null \
@@ -52,12 +44,11 @@ get_siblings() {
     echo "$ips"
 }
 
-# Broadcast a ProUpServTx pointing the masternode at DESIRED (this instance).
 promote() {
     local bal
     bal=$($CLI getbalance 2>/dev/null || echo 0)
     if awk "BEGIN{exit !(${bal:-0} <= 0)}"; then
-        log "WARNING: wallet balance ${bal} DASH — cannot pay fee. Fund ${FEE_ADDR:-<addr>} with ~0.01 DASH."
+        log "WARNING: wallet balance ${bal} ${COIN_TICKER:-coin} — cannot pay fee. Fund ${FEE_ADDR:-<addr>} with a little ${COIN_TICKER:-coin}."
         return 1
     fi
     if $CLI protx update_service "$PROTXHASH" "$DESIRED" "$KEY" >/dev/null 2>&1; then
@@ -70,7 +61,6 @@ promote() {
     fi
 }
 
-# ---- one control cycle (return, not continue, so it is unit-testable) -------
 run_cycle() {
     [[ -z "${PROTXHASH:-}" || -z "${KEY:-}" || -z "$MYIP" ]] && return 0
 
@@ -82,7 +72,6 @@ run_cycle() {
     reg_ip="${REGISTERED%%:*}"
     banned=false; [[ -n "$POSE" && "$POSE" != "-1" ]] && banned=true
 
-    # Case 1: I am the registered masternode.
     if [[ "$REGISTERED" == "$DESIRED" ]]; then
         if $banned && is_synced; then
             log "I am registered but PoSe-banned (height ${POSE}); reviving."
@@ -93,7 +82,6 @@ run_cycle() {
         return 0
     fi
 
-    # Is the currently-registered leader alive & healthy?
     reg_alive=false
     if [[ -n "$reg_ip" ]]; then
         if [[ "$reg_ip" == "$MYIP" ]]; then is_synced && reg_alive=true
@@ -104,7 +92,6 @@ run_cycle() {
         return 0
     fi
 
-    # Case 2: leader down / stale / banned -> elect a survivor.
     if ! is_synced; then log "leader unhealthy but I'm still syncing; wait."; return 0; fi
 
     SIBLINGS=$(get_siblings "${FLUX_APP_NAME:-}")
@@ -120,7 +107,6 @@ run_cycle() {
         return 0
     fi
 
-    # I am the elected survivor. Brief settle, then re-check nobody healthy took over.
     sleep "$SETTLE"
     RECHECK=$($CLI protx info "$PROTXHASH" 2>/dev/null | jq -r '.state.service // empty')
     if [[ -n "$RECHECK" && "$RECHECK" != "$REGISTERED" && "$RECHECK" != "$DESIRED" ]]; then
@@ -131,9 +117,8 @@ run_cycle() {
     promote
 }
 
-# ---- startup + loop --------------------------------------------------------
 main() {
-    until $CLI getblockchaininfo >/dev/null 2>&1; do log "waiting for dashd RPC..."; sleep 30; done
+    until $CLI getblockchaininfo >/dev/null 2>&1; do log "waiting for ${COIN_DAEMON} RPC..."; sleep 30; done
 
     if [[ -f "$FEE_ADDR_FILE" ]]; then
         FEE_ADDR=$(cat "$FEE_ADDR_FILE")
@@ -141,7 +126,7 @@ main() {
         FEE_ADDR=$($CLI getnewaddress "mn-fee" 2>/dev/null || true)
         [[ -n "$FEE_ADDR" ]] && echo "$FEE_ADDR" > "$FEE_ADDR_FILE"
     fi
-    log "this instance IP: ${MYIP:-unknown} | fee-source (fund ~0.01 DASH once): ${FEE_ADDR:-unavailable}"
+    log "this instance IP: ${MYIP:-unknown} | fee-source (fund a little ${COIN_TICKER:-coin} once): ${FEE_ADDR:-unavailable}"
     [[ -z "${PROTXHASH:-}" ]] && log "PROTXHASH not set — HA/self-heal DISABLED."
 
     while true; do
@@ -150,5 +135,4 @@ main() {
     done
 }
 
-# Allow tests to source helpers/run_cycle without launching the loop.
 [[ "${AUTOHEAL_SOURCE_ONLY:-}" == "1" ]] || main

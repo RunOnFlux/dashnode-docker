@@ -1,37 +1,25 @@
 #!/usr/bin/env bash
-# Dash masternode initializer for Flux.
-#
-# Key differences vs the legacy script:
-#  - Prefers the Flux-injected FLUX_NODE_HOST_IP (stable when the app is deployed
-#    with staticip:true) instead of third-party IP-echo services.
-#  - Advertises the correct MAINNET masternode port (9999) in externalip.
-#  - Re-asserts externalip and the operator key on EVERY boot, so a relocation /
-#    restart never leaves a stale advertised address behind.
+# Generic Flux HA masternode initializer. Coin-specific values live in coin.env.
+#  - prefer the Flux-injected FLUX_NODE_HOST_IP (stable when staticip:true)
+#  - advertise the correct mainnet MN port in externalip
+#  - re-assert externalip and the operator BLS key on EVERY boot (relocation-safe)
 set -uo pipefail
+# shellcheck disable=SC1091
+source /usr/local/bin/coin.env
 
-CONFIG_FILE="/root/.dashcore/dash.conf"
-MN_PORT=9999
-
-# Fallback IP-echo services (used only if Flux did not inject FLUX_NODE_HOST_IP).
 url_array=(
     "https://api4.my-ip.io/ip"
     "https://checkip.amazonaws.com"
     "https://api.ipify.org"
 )
-
 get_ip_fallback() {
     for url in "${url_array[@]}"; do
         WANIP=$(curl --silent -m 15 "$url" | tr -dc '[:alnum:].')
-        if [[ "$WANIP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
-            return 0
-        fi
+        [[ "$WANIP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && return 0
     done
-    WANIP=""
-    return 1
+    WANIP=""; return 1
 }
 
-# Prefer the IP that FluxOS injects for this node. With staticip:true this is a
-# verified, stable public IP; on relocation FluxOS re-injects the new node's IP.
 if [[ -n "${FLUX_NODE_HOST_IP:-}" ]]; then
     WANIP="${FLUX_NODE_HOST_IP}"
     echo " Using Flux-injected node IP: ${WANIP}"
@@ -40,59 +28,61 @@ else
     get_ip_fallback || echo " WARNING: could not determine external IP"
 fi
 
-# First boot only: create the base config. RPC creds persist on the volume.
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    RPCUSER=$(pwgen -1 18 -n)
-    PASSWORD=$(pwgen -1 20 -n)
+mkdir -p "$DATADIR"
+
+# First boot only: base config (rpc creds persist on the volume).
+if [[ ! -f "$CONF" ]]; then
     {
-        echo "rpcuser=$RPCUSER"
-        echo "rpcpassword=$PASSWORD"
+        echo "rpcuser=$(pwgen -1 18 -n)"
+        echo "rpcpassword=$(pwgen -1 20 -n)"
         echo "rpcallowip=127.0.0.1"
+        echo "rpcbind=127.0.0.1"
         echo "server=1"
-        echo "daemon=1"
         echo "listen=1"
-        echo "maxconnections=256"
-    } >> "$CONFIG_FILE"
+        echo "daemon=1"
+        for n in ${SEED_NODES:-}; do echo "addnode=$n"; done
+        [[ -n "${EXTRA_CONF:-}" ]] && printf '%s\n' "${EXTRA_CONF}"
+    } >> "$CONF"
 fi
 
-# Always (re)assert the operator BLS key from the KEY env (supports key rotation).
-sed -i "/^masternodeblsprivkey=/d" "$CONFIG_FILE"
-if [[ -n "${KEY:-}" ]]; then
-    echo "masternodeblsprivkey=$KEY" >> "$CONFIG_FILE"
-fi
+# Always (re)assert the operator BLS key from KEY (supports rotation).
+sed -i "/^${BLS_PARAM}=/d" "$CONF"
+[[ -n "${KEY:-}" ]] && echo "${BLS_PARAM}=$KEY" >> "$CONF"
 
-# Always refresh externalip to the CURRENT node IP:port. Mainnet masternodes must
-# advertise port 9999 — non-standard ports are penalised by the Dash network.
-sed -i "/^externalip=/d" "$CONFIG_FILE"
+# Always refresh externalip to the CURRENT node IP:port (correct mainnet MN port).
+sed -i "/^externalip=/d" "$CONF"
 if [[ -n "${WANIP:-}" ]]; then
-    echo "externalip=${WANIP}:${MN_PORT}" >> "$CONFIG_FILE"
+    echo "externalip=${WANIP}:${MN_PORT}" >> "$CONF"
     echo " externalip set to ${WANIP}:${MN_PORT}"
 fi
 
-# Optional fast-sync bootstrap. On a FRESH volume (first deploy, or a relocation to
-# a new node where the local volume does not follow) this fetches a recent chain
-# snapshot so we catch up in minutes instead of syncing from genesis. This is the
-# safe way to get fast failover: each instance keeps its OWN independent chain — we
-# never syncthing-share a live database (that stops the container / risks wiping it).
-if [[ -n "${BOOTSTRAP_URL:-}" && ! -d /root/.dashcore/blocks ]]; then
-    echo " No local chain found; fetching bootstrap snapshot from ${BOOTSTRAP_URL}..."
-    if curl -fSL -m 3600 "$BOOTSTRAP_URL" -o /tmp/bootstrap.tar.gz; then
-        if [[ -z "${BOOTSTRAP_SHA256:-}" ]] || echo "${BOOTSTRAP_SHA256}  /tmp/bootstrap.tar.gz" | sha256sum -c -; then
-            tar xzf /tmp/bootstrap.tar.gz -C /root/.dashcore && echo " Bootstrap extracted; dashd will sync the remaining gap."
+# Optional fast-sync bootstrap. On a FRESH datadir (first deploy, or relocation to a
+# new node), fetch a recent chain snapshot so we catch up in minutes instead of from
+# genesis. Each instance keeps its OWN chain — we never syncthing-share a live DB.
+# tar xf auto-detects gz/xz/bz2. Set BOOTSTRAP_URL (+ optional BOOTSTRAP_SHA256).
+if [[ -n "${BOOTSTRAP_URL:-}" && ! -d "${DATADIR}/blocks" ]]; then
+    echo " No local chain; fetching bootstrap: ${BOOTSTRAP_URL}"
+    if curl -fSL -m 3600 "${BOOTSTRAP_URL}" -o /tmp/bootstrap.archive; then
+        if [[ -z "${BOOTSTRAP_SHA256:-}" ]] || echo "${BOOTSTRAP_SHA256}  /tmp/bootstrap.archive" | sha256sum -c -; then
+            if tar xf /tmp/bootstrap.archive -C "${DATADIR}"; then
+                echo " Bootstrap extracted; daemon will sync the remaining gap."
+            else
+                echo " WARNING: bootstrap extract failed; syncing normally."
+            fi
         else
-            echo " WARNING: bootstrap checksum mismatch — ignoring snapshot, syncing normally."
+            echo " WARNING: bootstrap checksum mismatch; ignoring snapshot, syncing normally."
         fi
-        rm -f /tmp/bootstrap.tar.gz
+        rm -f /tmp/bootstrap.archive
     else
-        echo " WARNING: bootstrap download failed — syncing normally."
+        echo " WARNING: bootstrap download failed; syncing normally."
     fi
 fi
 
-# Keep dashd alive.
+# Keep the daemon alive.
 while true; do
-    if [[ -z "$(pgrep dashd)" ]]; then
-        echo " Starting dashd..."
-        dashd -daemon
+    if [[ -z "$(pgrep -x "${COIN_DAEMON}")" ]]; then
+        echo " Starting ${COIN_DAEMON}..."
+        ${COIN_DAEMON} -datadir="${DATADIR}" -conf="${CONF}" -daemon
     fi
     sleep 120
 done

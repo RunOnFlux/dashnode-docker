@@ -34,8 +34,9 @@
         },
         {
           "name": "PROTXHASH",
-          "description": "Your masternode registration hash (proTxHash). Enables automatic on-chain IP updates so the node is never PoSe-banned after a relocation.",
-          "placeholder": "Enter your proTxHash"
+          "description": "Optional. Your masternode registration hash (proTxHash). Enables automatic on-chain IP updates (HA failover) so the node is never PoSe-banned after a relocation.",
+          "placeholder": "Enter your proTxHash",
+          "optional": true
         }
       ]
     }

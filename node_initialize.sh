@@ -7,25 +7,25 @@ set -uo pipefail
 # shellcheck disable=SC1091
 source /usr/local/bin/coin.env
 
-url_array=(
-    "https://api4.my-ip.io/ip"
-    "https://checkip.amazonaws.com"
-    "https://api.ipify.org"
-)
-get_ip_fallback() {
-    for url in "${url_array[@]}"; do
-        WANIP=$(curl --silent -m 15 "$url" | tr -dc '[:alnum:].')
-        [[ "$WANIP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && return 0
+# Determine the node's CURRENT public IP. Prefer a LIVE lookup (what the original
+# production images did) — it is robust to a stale FLUX_NODE_HOST_IP after an
+# in-place `docker restart` on a node IP change (staticip:false path). Fall back to
+# the Flux-injected env only if every live lookup fails.
+detect_public_ip() {
+    local url ip
+    for url in "https://api4.my-ip.io/ip" "https://checkip.amazonaws.com" "https://api.ipify.org"; do
+        ip=$(curl --silent -m 15 "$url" | tr -dc '[:alnum:].')
+        [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && { echo "$ip"; return 0; }
     done
-    WANIP=""; return 1
+    [[ -n "${FLUX_NODE_HOST_IP:-}" ]] && { echo "${FLUX_NODE_HOST_IP}"; return 0; }
+    return 1
 }
 
-if [[ -n "${FLUX_NODE_HOST_IP:-}" ]]; then
-    WANIP="${FLUX_NODE_HOST_IP}"
-    echo " Using Flux-injected node IP: ${WANIP}"
+WANIP="$(detect_public_ip || true)"
+if [[ -n "$WANIP" ]]; then
+    echo " Detected public IP: ${WANIP}"
 else
-    echo " FLUX_NODE_HOST_IP not set; falling back to external IP lookup..."
-    get_ip_fallback || echo " WARNING: could not determine external IP"
+    echo " WARNING: could not determine public IP"
 fi
 
 mkdir -p "$DATADIR"

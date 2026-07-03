@@ -1,11 +1,11 @@
 {
   "description": "Host your Dash Masternode on the Flux Network (HA: 2 redundant nodes with automatic failover)",
-  "priceUSD": 7,
+  "priceUSD": 5,
   "category": "Masternode",
   "version": 8,
   "name": "DashMN",
   "instances": 2,
-  "staticip": true,
+  "staticip": false,
   "compose": [
     {
       "name": "node",

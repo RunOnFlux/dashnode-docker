@@ -25,6 +25,18 @@ DESIRED="${MYIP}:${MN_PORT}"
 
 log() { echo " [mn-autoheal] $*"; }
 
+# Live public-IP detection (robust to a stale FLUX_NODE_HOST_IP after an in-place
+# docker restart). The Flux-injected env is only a last-resort fallback.
+detect_public_ip() {
+    local url ip
+    for url in "https://api4.my-ip.io/ip" "https://checkip.amazonaws.com" "https://api.ipify.org"; do
+        ip=$(curl --silent -m 15 "$url" | tr -dc '[:alnum:].')
+        [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && { echo "$ip"; return 0; }
+    done
+    [[ -n "${FLUX_NODE_HOST_IP:-}" ]] && { echo "${FLUX_NODE_HOST_IP}"; return 0; }
+    return 1
+}
+
 probe() { timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1; }
 
 is_synced() {
@@ -119,6 +131,12 @@ run_cycle() {
 
 main() {
     until $CLI getblockchaininfo >/dev/null 2>&1; do log "waiting for ${COIN_DAEMON} RPC..."; sleep 30; done
+
+    # Resolve our real current public IP live at startup (this controller restarts
+    # with the container on any node IP change, so this stays correct without env).
+    MYIP="$(detect_public_ip || echo "${FLUX_NODE_HOST_IP:-}")"
+    DESIRED="${MYIP}:${MN_PORT}"
+    log "resolved public IP: ${MYIP:-unknown}"
 
     if [[ -f "$FEE_ADDR_FILE" ]]; then
         FEE_ADDR=$(cat "$FEE_ADDR_FILE")
